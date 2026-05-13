@@ -525,40 +525,7 @@ const App = () => {
       }
     });
 
-    return overdue.map(r => ({
-      'Category':      r._category === 'Due Order' ? 'Due' : 'Scheduled',
-      'Date':          r.date,
-      'Order No':      r.order,
-      'Party Name':    r.partyName,
-      'Name of Item':  r.nameOfItem,
-      'Part No':       r.partNo,
-      'Ordered':       r.ordered,
-      'Balance':       r.balance,
-      'Value':         r.value,
-      'Due On':        fmtDate(r.dueOn),
-      'Stock Qty':     r.stockQty,
-      'Allocated':     r.allocatedQty,
-      'Status':        r.stockStatus,
-      'PPO Date':      r.poDetails.date,
-      'PPO Order No':  r.poDetails.order,
-      'PPO Party':     r.poDetails.party,
-      'PPO Ordered':   r.poDetails.ordered,
-      'PPO Balance':   r.poDetails.balance,
-      'PPO Allocated': r.poAllocated,
-      'PPO Due Date':  fmtDate(r.poDetails.dueOn),
-      'VPO SO No':     r.vpoDetails.soNo,
-      'VPO Date':      r.vpoDetails.soDate,
-      'VPO Line':      r.vpoDetails.line,
-      'VPO Cust PO':   r.vpoDetails.custPO,
-      'VPO Ordered':   r.vpoDetails.ordered,
-      'VPO Open':      r.vpoDetails.open,
-      'VPO Allocated': r.vpoAllocated || 0,
-      'Cust Req Date': fmtDate(r.vpoDetails.reqDate),
-      'Estimated M.A.D.': fmtDate(r.vpoDetails.mad),
-      'VPO Import':    r.vpoDetails.importBy || '-',
-      'VPO WH':        r.vpoDetails.wh || '-',
-      'Action':        r.action
-    }));
+    return overdue;
   };
 
   // ── Generic table renderer (all columns from data) ───────────────────────────
@@ -777,22 +744,27 @@ const App = () => {
     };
 
     rows.forEach(r => {
-      totals.ordered += (r.ordered || 0);
-      totals.balance += (r.balance || 0);
-      totals.value += (r.value || 0);
-      totals.stockQty += (r.stockQty || 0);
-      totals.allocatedQty += (r.allocatedQty || 0);
-      totals.poOrdered += (r.poDetails.ordered || 0);
-      totals.poBalance += (r.poDetails.balance || 0);
-      totals.poAllocated += (r.poAllocated || 0);
-      totals.vpoOrdered += (r.vpoDetails.ordered || 0);
-      totals.vpoOpen += (r.vpoDetails.open || 0);
-      totals.vpoAllocated += (r.vpoAllocated || 0);
-      if (r._category === 'Due' || r._category === 'Due Order') totals.due++;
+      totals.ordered += (Number(r.ordered) || 0);
+      totals.balance += (Number(r.balance) || 0);
+      totals.value += (Number(r.value) || 0);
+      totals.stockQty += (Number(r.stockQty) || 0);
+      totals.allocatedQty += (Number(r.allocatedQty) || 0);
+      if (r.poDetails) {
+        totals.poOrdered += (Number(r.poDetails.ordered) || 0);
+        totals.poBalance += (Number(r.poDetails.balance) || 0);
+      }
+      totals.poAllocated += (Number(r.poAllocated) || 0);
+      if (r.vpoDetails) {
+        totals.vpoOrdered += (Number(r.vpoDetails.ordered) || 0);
+        totals.vpoOpen += (Number(r.vpoDetails.open) || 0);
+      }
+      totals.vpoAllocated += (Number(r.vpoAllocated) || 0);
+      if (r._category === 'Due Order') totals.due++;
       else totals.scheduled++;
     });
 
     const display = rows.map(r => ({
+      'Category':      r._category === 'Due Order' ? 'Due' : 'Scheduled',
       'Date':          fmtDate(r.date),
       'Order No':      r.order,
       'Party Name':    r.partyName,
@@ -802,28 +774,27 @@ const App = () => {
       'Balance':       r.balance,
       'Value':         r.value,
       'Due on':        fmtDate(r.dueOn),
-      'Category':      r._category,
       'Stock Qty':     r.stockQty,
       'Allocated Qty': r.allocatedQty || 0,
       'Status':        r.stockStatus,
-      'PO Date':       fmtDate(r.poDetails.date),
-      'PO Order':      r.poDetails.order || '-',
-      'PO Party':      r.poDetails.party || '-',
-      'PO Ordered':    r.poDetails.ordered || 0,
-      'PO Balance':    r.poDetails.balance || 0,
+      'PO Date':       fmtDate(r?.poDetails?.date),
+      'PO Order':      r?.poDetails?.order || '-',
+      'PO Party':      r?.poDetails?.party || '-',
+      'PO Ordered':    r?.poDetails?.ordered || 0,
+      'PO Balance':    r?.poDetails?.balance || 0,
       'PO Allocated':  r.poAllocated || 0,
-      'PO Due on':     fmtDate(r.poDetails.dueOn),
-      'VPO SO No':     r.vpoDetails.soNo || '-',
-      'VPO Date':      fmtDate(r.vpoDetails.soDate),
-      'VPO Line':      fmtDate(r.vpoDetails.lineDate),
-      'VPO Cust PO':   r.vpoDetails.custPO || '-',
-      'VPO Ordered':   r.vpoDetails.ordered || 0,
-      'VPO Open':      r.vpoDetails.open || 0,
+      'PO Due on':     fmtDate(r?.poDetails?.dueOn),
+      'VPO SO No':     r?.vpoDetails?.soNo || '-',
+      'VPO Date':      fmtDate(r?.vpoDetails?.soDate),
+      'VPO Line':      r?.vpoDetails?.line || '-',
+      'VPO Cust PO':   r?.vpoDetails?.custPO || '-',
+      'VPO Ordered':   r?.vpoDetails?.ordered || 0,
+      'VPO Open':      r?.vpoDetails?.open || 0,
       'VPO Allocated': r.vpoAllocated || 0,
-      'Cust Req Date': fmtDate(r.vpoDetails.reqDate),
-      'Estimated M.A.D.': fmtDate(r.vpoDetails.mad),
-      'VPO Import':    r.vpoDetails.importBy || '-',
-      'VPO WH':        r.vpoDetails.wh || '-',
+      'Cust Req Date': fmtDate(r?.vpoDetails?.reqDate),
+      'Estimated M.A.D.': fmtDate(r?.vpoDetails?.mad),
+      'VPO Import':    r?.vpoDetails?.importBy || '-',
+      'VPO WH':        r?.vpoDetails?.wh || '-',
       'Action':        r.action
     }));
 
