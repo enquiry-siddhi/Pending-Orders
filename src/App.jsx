@@ -47,9 +47,13 @@ const saveData = async (type, list) => {
     // We clear the table and re-insert the fresh batch for that type
     await supabase.from(TABLE_MAP[type]).delete().neq('id', -1); 
     if (list && list.length > 0) {
-      // Supabase can handle bulk insert of objects
-      const { error } = await supabase.from(TABLE_MAP[type]).insert(list.map(r => ({ data: r })));
-      if (error) throw error;
+      // Chunk the list to avoid Supabase/HTTP limits (e.g., 500 rows per batch)
+      const chunkSize = 500;
+      for (let i = 0; i < list.length; i += chunkSize) {
+        const chunk = list.slice(i, i + chunkSize);
+        const { error } = await supabase.from(TABLE_MAP[type]).insert(chunk.map(r => ({ data: r })));
+        if (error) throw error;
+      }
     }
   } catch (e) { console.error(`Cloud Save failed for ${type}`, e); }
 };
@@ -178,10 +182,10 @@ const App = () => {
       headers = ["Description", "Quantity", "Rate", "Value"];
       filename = "Stock_Template.xlsx";
     } else if (type === 'so') {
-      headers = ["Date", "Order No", "Party Name", "Name of Item", "Part No", "Ordered", "Balance", "Value", "Due on"];
+      headers = ["Date", "Order", "Party's Name", "Name of Item", "Part No", "Ordered", "Balance", "Rate", "Discount", "Value", "Due on"];
       filename = "Sales_Order_Template.xlsx";
     } else if (type === 'po') {
-      headers = ["Date", "Order No", "Party Name", "Name of Item", "Part No", "Ordered", "Balance", "Value", "Due on"];
+      headers = ["Date", "Order", "Party's Name", "Name of Item", "Material Code", "Part No", "Ordered", "Balance", "Rate", "Discount", "Value", "Due on"];
       filename = "Purchase_Order_Template.xlsx";
     } else if (type === 'oo') {
       headers = ["Material No", "Sales Order No", "Sales Order Date", "Line No", "Customer PO No", "Order Qty", "Open Qty", "Cust Req Date", "Estimated M.A.D.", "Import by", "Warehouse Name"];
@@ -198,9 +202,9 @@ const App = () => {
   const getV = (r, keys) => {
     for (const k of keys) {
       if (r[k] !== undefined && r[k] !== null && r[k] !== '') return r[k];
-      const nk = k.toLowerCase().replace(/[\s_.]/g, '');
+      const nk = k.toLowerCase().replace(/[\s_.']/g, '');
       for (const rk in r) {
-        if (rk.toLowerCase().replace(/[\s_.]/g, '') === nk && r[rk] !== undefined && r[rk] !== null && r[rk] !== '') return r[rk];
+        if (rk.toLowerCase().replace(/[\s_.']/g, '') === nk && r[rk] !== undefined && r[rk] !== null && r[rk] !== '') return r[rk];
       }
     }
     return '';
@@ -544,7 +548,7 @@ const App = () => {
     return kl.includes('rate') || kl.includes('value') || kl.includes('qty') ||
       kl.includes('quantity') || kl.includes('balance') || kl.includes('amount') ||
       kl.includes('price') || kl.includes('ordered') || kl.includes('stock') ||
-      kl.includes('allocated') || kl.includes('po');
+      kl.includes('allocated') || kl.includes('po') || kl.includes('discount');
   };
   const isDateCol = (key) => {
     const kl = String(key).toLowerCase();
@@ -580,7 +584,7 @@ const App = () => {
     }
 
     const kl = String(key).toLowerCase();
-    if ((kl.includes('rate') || kl.includes('value') || kl.includes('amount') || kl.includes('price')) && !isNaN(Number(val)) && val !== '')
+    if ((kl.includes('rate') || kl.includes('value') || kl.includes('amount') || kl.includes('price') || kl.includes('discount')) && !isNaN(Number(val)) && val !== '')
       return fmtNum(val, 2);
     return String(val);
   };
