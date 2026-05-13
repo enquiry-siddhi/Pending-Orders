@@ -175,7 +175,7 @@ const App = () => {
     let headers = [];
     let filename = "";
     if (type === 'stock') {
-      headers = ["Description", "Quantity"];
+      headers = ["Description", "Quantity", "Rate", "Value"];
       filename = "Stock_Template.xlsx";
     } else if (type === 'so') {
       headers = ["Date", "Order No", "Party Name", "Name of Item", "Part No", "Ordered", "Balance", "Value", "Due on"];
@@ -265,7 +265,7 @@ const App = () => {
         _nameOfItem: nameOfItem,
         date:       getV(r, ['Date', 'Order Date', 'Document Date']),
         order:      clean(getV(r, ['Order No', 'Order', 'Reference', 'Sales Order', 'Document No'])),
-        partyName:  clean(getV(r, ["Party's Name", 'Customer', 'Party', 'Client', 'Sold-to party'])),
+        partyName:  clean(getV(r, ['Party Name', "Party's Name", 'Customer', 'Party', 'Client', 'Sold-to party'])),
         nameOfItem,
         partNo:     clean(getV(r, ['Part No', 'Part Number', 'Material Code', 'Material', 'Item Code'])),
         ordered:    Number(getV(r, ['Ordered', 'Order Qty', 'Quantity'])) || 0,
@@ -304,7 +304,7 @@ const App = () => {
         _nameOfItem: nameOfItem,
         date: getV(p, ['Date', 'Order Date', 'PO Date']),
         order: getV(p, ['Order No', 'Order', 'PO No', 'Reference']),
-        partyName: getV(p, ["Party's Name", 'Vendor', 'Supplier', 'Party']),
+        partyName: getV(p, ['Party Name', "Party's Name", 'Vendor', 'Supplier', 'Party']),
         ordered: Number(getV(p, ['Ordered', 'Order Qty', 'Quantity'])) || 0,
         balance: qty,
         remaining: qty,
