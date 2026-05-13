@@ -142,7 +142,7 @@ const buildMasterReport = (data) => {
   const stockMap = {};
   data.stock.forEach(s => {
     const desc = clean(getV(s, ['Description', 'Name of Item', 'Item Name', 'Material'])).toLowerCase();
-    const part = toStrict(getV(s, ['Part No', 'Material', 'Material Code', 'Code']));
+    const part = toStrict(getV(s, ['Part No', 'Material', 'Material Code', 'Code', 'Part Number']));
     const qty = Number(getV(s, ['Quantity', 'Qty', 'Closing Stock'])) || 0;
     const entry = { total: qty, remaining: qty };
     if (desc) stockMap[desc] = entry;
@@ -152,7 +152,7 @@ const buildMasterReport = (data) => {
   const poGroups = {};
   data.po.forEach(p => {
     const desc = clean(getV(p, ['Name of Item', 'Item Name', 'Description', 'Material'])).toLowerCase();
-    const part = toStrict(getV(p, ['Part No', 'Material', 'Material Code', 'Code']));
+    const part = toStrict(getV(p, ['Part No', 'Material', 'Material Code', 'Code', 'Part Number']));
     const entry = {
       date: getV(p, ['Date', 'PO Date', 'Order Date', 'Document Date', 'Created On']),
       order: getV(p, ['Order No', 'Order', 'PO No', 'Document No', 'PO Number', 'Reference']),
@@ -177,7 +177,8 @@ const buildMasterReport = (data) => {
       lineDate: getV(o, ['Line Item Create Date', 'Line Date', 'Item Date', 'Line Created']),
       line: getV(o, ['SO Line', 'Line', 'Item No', 'Position', 'Item', 'Row']),
       custPO: getV(o, ['Cust PO No', 'Customer PO No', 'PO No', 'Ref', 'Customer Ref', 'Reference', 'Customer PO Number']),
-      custPODate: getV(o, ['Cust PO Date', 'Customer PO Date', 'PO Date', 'Ref Date', 'PO Date']),
+      custPODate: getV(o, ['Cust PO Date', 'Customer PO Date', 'PO Date', 'Ref Date']),
+      importBy: getV(o, ['Import By', 'Imported By', 'Mode', 'Shipment Mode']),
       ordered: Number(getV(o, ['Order Qty', 'Ordered', 'Quantity', 'Qty', 'Ordered Quantity'])) || 0,
       open: Number(getV(o, ['Open Qty', 'Balance', 'Pending', 'Open Quantity', 'Outstanding'])) || 0,
       remaining: Number(getV(o, ['Open Qty', 'Balance', 'Pending', 'Open Quantity', 'Outstanding'])) || 0,
@@ -197,28 +198,46 @@ const buildMasterReport = (data) => {
     return {
       _dueDate: dueOn, _balance: balance, _category: (dueOn && dueOn < DUE_CUTOFF) ? 'Due Order' : 'Schedule Order', _name: name, _partStrict: toStrict(partNo),
       date: getV(r, ['Date', 'Order Date', 'Document Date']), order: getV(r, ['Order No', 'Order', 'Sales Order']), partyName: getV(r, ['Party Name', "Party's Name", 'Customer', 'Name']), nameOfItem: clean(getV(r, ['Name of Item', 'Description'])), partNo, ordered: Number(getV(r, ['Ordered', 'Quantity', 'Qty'])) || 0, balance, value: Number(getV(r, ['Value', 'Amount', 'Net Value'])) || 0, dueOn, stockQty: 0, allocatedQty: 0, poAllocated: 0, vpoAllocated: 0, stockStatus: '', action: '',
-      poDetails: { order: '', party: '', date: '', ordered: 0, balance: 0, dueOn: null }, vpoDetails: { soNo: '', soDate: '', lineDate: '', line: '', custPO: '', custPODate: '', ordered: 0, open: 0, reqDate: '', mad: '' }
+      poDetails: { order: '', party: '', date: '', ordered: 0, balance: 0, dueOn: null }, vpoDetails: { soNo: '', soDate: '', lineDate: '', line: '', custPO: '', custPODate: '', importBy: '', ordered: 0, open: 0, reqDate: '', mad: '' }
     };
   });
   overdue.forEach(r => {
     const s = stockMap[r._name] || stockMap[r._partStrict]; r.stockQty = s ? s.total : 0;
     if (s && s.remaining > 0) { const take = Math.min(s.remaining, r._balance); s.remaining -= take; r.allocatedQty = take; }
     r.stockStatus = r.allocatedQty >= r._balance ? 'Available' : 'Need to Arrange';
-    let rem = r._balance - r.allocatedQty;
-    if (rem > 0) {
+    
+    // Step 1: PO Allocation
+    let remPO = r._balance - r.allocatedQty;
+    if (remPO > 0) {
       const pos = poGroups[r._name] || poGroups[r._partStrict];
-      if (pos) { for (const p of pos) { if (p.remaining <= 0) continue; const take = Math.min(p.remaining, rem); p.remaining -= take; r.poAllocated += take; if (!r.poDetails.order) r.poDetails = { ...p }; rem -= take; if (rem <= 0) break; } }
+      if (pos) { for (const p of pos) { if (p.remaining <= 0) continue; const take = Math.min(p.remaining, remPO); p.remaining -= take; r.poAllocated += take; if (!r.poDetails.order) r.poDetails = { ...p }; remPO -= take; if (remPO <= 0) break; } }
     }
-    if (r.poAllocated === 0) {
-      let remV = r._balance - r.allocatedQty;
-      if (remV > 0) {
-        const vpos = ooGroups[r._name] || ooGroups[r._partStrict];
-        if (vpos) { for (const v of vpos) { if (v.remaining <= 0) continue; const take = Math.min(v.remaining, remV); v.remaining -= take; r.vpoAllocated += take; if (!r.vpoDetails.soNo) r.vpoDetails = { ...v }; remV -= take; if (remV <= 0) break; } }
+    
+    // Step 2: Vendor PO Allocation (ALWAYS POPULATE DETAILS)
+    let remV = r._balance - r.allocatedQty;
+    const vpos = ooGroups[r._name] || ooGroups[r._partStrict];
+    if (vpos) {
+      for (const v of vpos) {
+        if (v.remaining <= 0) continue;
+        const take = Math.min(v.remaining, remV);
+        v.remaining -= take;
+        r.vpoAllocated += take;
+        if (!r.vpoDetails.soNo) r.vpoDetails = { ...v };
+        remV -= take;
+        if (remV <= 0) break;
       }
     }
-    const totalCovered = r.allocatedQty + r.poAllocated + r.vpoAllocated;
-    if (r.balance <= 0 || totalCovered >= (r.balance - 0.001)) r.action = 'Covered';
-    else if (totalCovered > 0) r.action = 'Partial Qty ordered need to make order';
+    
+    // Step 3: Action Logic (Follow Priority Rule: Stock+PO OR Stock+VPO if PO nil)
+    let effectiveCoverage = 0;
+    if (r.poAllocated > 0) {
+      effectiveCoverage = r.allocatedQty + r.poAllocated;
+    } else {
+      effectiveCoverage = r.allocatedQty + r.vpoAllocated;
+    }
+    
+    if (r.balance <= 0 || effectiveCoverage >= (r.balance - 0.001)) r.action = 'Covered';
+    else if (effectiveCoverage > 0) r.action = 'Partial Qty ordered need to make order';
     else r.action = 'Make PO need to raise';
   });
   return overdue;
@@ -278,7 +297,7 @@ const MasterReport = ({ data }) => {
     'Category': r._category, 'Date': fmtDate(r.date), 'Order No': r.order, 'Party Name': r.partyName, 'Name of Item': r.nameOfItem, 'Part No': r.partNo, 'Ordered': r.ordered, 'Balance': r.balance, 'Value': r.value, 'Due on': fmtDate(r.dueOn),
     'Stock Qty': r.stockQty, 'Allocated Qty': r.allocatedQty, 'Status': r.stockStatus,
     'PO Order': r.poDetails?.order || '-', 'PO Party': r.poDetails?.party || '-', 'PO Date': fmtDate(r.poDetails?.date), 'PO Ordered': r.poDetails?.ordered || 0, 'PO Balance': r.poDetails?.balance || 0, 'PO Due': fmtDate(r.poDetails?.dueOn),
-    'VPO SO': r.vpoDetails?.soNo || '-', 'VPO SO Date': fmtDate(r.vpoDetails?.soDate), 'VPO Line Date': fmtDate(r.vpoDetails?.lineDate), 'VPO Line': r.vpoDetails?.line || '-', 'VPO CustPO': r.vpoDetails?.custPO || '-', 'VPO CustPODate': fmtDate(r.vpoDetails?.custPODate), 'VPO Ordered': r.vpoDetails?.ordered || 0, 'VPO Open': r.vpoDetails?.open || 0, 'VPO ReqDate': fmtDate(r.vpoDetails?.reqDate), 'VPO MAD': fmtDate(r.vpoDetails?.mad),
+    'VPO SO': r.vpoDetails?.soNo || '-', 'VPO SO Date': fmtDate(r.vpoDetails?.soDate), 'VPO Line Date': fmtDate(r.vpoDetails?.lineDate), 'VPO Line': r.vpoDetails?.line || '-', 'VPO CustPO': r.vpoDetails?.custPO || '-', 'VPO CustPODate': fmtDate(r.vpoDetails?.custPODate), 'VPO ImportBy': r.vpoDetails?.importBy || '-', 'VPO Ordered': r.vpoDetails?.ordered || 0, 'VPO Open': r.vpoDetails?.open || 0, 'VPO ReqDate': fmtDate(r.vpoDetails?.reqDate), 'VPO MAD': fmtDate(r.vpoDetails?.mad),
     'Action': r.action
   })), [filtered]);
   return (
@@ -287,7 +306,7 @@ const MasterReport = ({ data }) => {
       <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
         <div className="stat-pill" style={{ borderColor: '#e11d48' }}>Due: <strong>{stats.due}</strong></div><div className="stat-pill" style={{ borderColor: '#10b981' }}>Scheduled: <strong>{stats.sch}</strong></div><div className="stat-pill" style={{ borderColor: '#2563eb' }}>Ordered: <strong>{fmtNum(stats.ordered)}</strong></div><div className="stat-pill" style={{ borderColor: '#f59e0b' }}>Balance: <strong>{fmtNum(stats.balance)}</strong></div><div className="stat-pill" style={{ borderColor: '#0ea5e9' }}>Value: <strong>{fmtNum(stats.value, 2)}</strong></div>
       </div>
-      <DataTable list={display} hideSearch={true} columnGroups={[{ label: 'SO Details', span: 10, bg: '#1e40af' }, { label: 'Stock', span: 3, bg: '#0369a1' }, { label: 'PO', span: 6, bg: '#0891b2' }, { label: 'Vendor PO', span: 10, bg: '#0d9488' }, { label: 'Action', span: 1, bg: '#111827' }]} rowStyle={r => (r['Category'] === 'Due Order' ? { background: '#fff1f2' } : {})} />
+      <DataTable list={display} hideSearch={true} columnGroups={[{ label: 'SO Details', span: 10, bg: '#1e40af' }, { label: 'Stock', span: 3, bg: '#0369a1' }, { label: 'PO', span: 6, bg: '#0891b2' }, { label: 'Vendor PO', span: 11, bg: '#0d9488' }, { label: 'Action', span: 1, bg: '#111827' }]} rowStyle={r => (r['Category'] === 'Due Order' ? { background: '#fff1f2' } : {})} />
     </div>
   );
 };
