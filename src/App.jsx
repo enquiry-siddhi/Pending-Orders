@@ -54,21 +54,31 @@ const saveData = async (type, list) => {
   } catch (e) { console.error(`Cloud Save failed for ${type}`, e); }
 };
 
+const fetchFull = async (table) => {
+  let allData = [];
+  let from = 0;
+  const step = 1000;
+  while (true) {
+    const { data, error } = await supabase.from(table).select('data').range(from, from + step - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    allData = allData.concat(data.map(r => r.data));
+    if (data.length < step) break;
+    from += step;
+  }
+  return allData;
+};
+
 const loadData = async () => {
   try {
-    const results = await Promise.all([
-      supabase.from('stock').select('data'),
-      supabase.from('sales_orders').select('data'),
-      supabase.from('purchase_orders').select('data'),
-      supabase.from('vendor_orders').select('data')
+    const [stock, so, po, oo] = await Promise.all([
+      fetchFull('stock'),
+      fetchFull('sales_orders'),
+      fetchFull('purchase_orders'),
+      fetchFull('vendor_orders')
     ]);
 
-    return {
-      stock: results[0].data?.map(r => r.data) || [],
-      so:    results[1].data?.map(r => r.data) || [],
-      po:    results[2].data?.map(r => r.data) || [],
-      oo:    results[3].data?.map(r => r.data) || []
-    };
+    return { stock, so, po, oo };
   } catch (e) { 
     console.error('Cloud Load failed', e); 
     return { stock: [], so: [], po: [], oo: [] };
