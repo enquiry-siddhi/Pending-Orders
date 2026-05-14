@@ -342,8 +342,8 @@ const Dashboard = ({ data, searchTerm }) => {
     'PO Vs SO': daysDiff(r.poDetails?.date, r.date),
     'Vendor SO No': r.vpoDetails?.soNo || '-',
     'Vendor SO Date': fmtDate(r.vpoDetails?.soDate),
-    'SO Date vs PO Date': daysDiff(r.vpoDetails?.soDate, r.poDetails?.date),
-    'VSO Vs Pending SO': daysDiff(r.vpoDetails?.soDate, r.date),
+    'VSO vs PO': daysDiff(r.vpoDetails?.soDate, r.poDetails?.date),
+    'VSO vs SO': daysDiff(r.vpoDetails?.soDate, r.date),
     'Vendor MAD': fmtDate(r.vpoDetails?.mad),
     'MAD vs VSO Date': daysDiff(r.vpoDetails?.mad, r.vpoDetails?.soDate),
     'MAD vs SO': daysDiff(r.vpoDetails?.mad, r.date)
