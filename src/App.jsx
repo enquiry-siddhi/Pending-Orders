@@ -11,6 +11,17 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const clean = (s) => String(s || "").trim();
 const toStrict = (s) => clean(s).replace(/[^a-z0-9]/gi, '').toLowerCase();
 
+const getGapColor = (days) => {
+  const d = Number(days);
+  if (isNaN(d) || d <= 0) return 'transparent';
+  if (d < 7) return '#fefce8'; // Very light yellow
+  if (d < 15) return '#fef9c3'; // Light yellow
+  if (d < 30) return '#fef08a'; // Yellow
+  if (d < 60) return '#fde047'; // Bright yellow
+  if (d < 90) return '#eab308'; // Darker gold
+  return '#a16207'; // Very dark gold
+};
+
 const daysDiff = (d1, d2) => {
   if (!d1 || !d2) return null;
   const t1 = toDate(d1), t2 = toDate(d2);
@@ -90,7 +101,11 @@ const fmtCell = (key, val) => {
   const kl = String(key).toLowerCase();
   if (kl.includes(' vs ') && val !== null && val !== '') {
     const n = Number(val);
-    if (!isNaN(n)) return n + " Days";
+    if (!isNaN(n)) {
+      const bg = getGapColor(n);
+      const color = n > 60 ? '#fff' : '#1e293b';
+      return <div style={{ background: bg, color: color, padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: '800', display: 'inline-block', minWidth: '60px', textAlign: 'center', border: n > 0 ? '1px solid rgba(0,0,0,0.05)' : 'none' }}>{n} Days</div>;
+    }
   }
   if (isDateCol(key)) { const d = toDate(val); if (d) return fmtDate(d); }
   if (key === 'Category') {
