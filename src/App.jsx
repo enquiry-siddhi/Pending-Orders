@@ -11,6 +11,13 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const clean = (s) => String(s || "").trim();
 const toStrict = (s) => clean(s).replace(/[^a-z0-9]/gi, '').toLowerCase();
 
+const daysDiff = (d1, d2) => {
+  if (!d1 || !d2) return null;
+  const t1 = toDate(d1), t2 = toDate(d2);
+  if (!t1 || !t2) return null;
+  return Math.round((t1 - t2) / (1000 * 60 * 60 * 24));
+};
+
 const toDate = (val) => {
   if (!val) return null;
   if (val instanceof Date) return val;
@@ -59,6 +66,7 @@ const getV = (r, keys) => {
 
 const isNumericCol = (key) => {
   const kl = String(key).toLowerCase();
+  if (kl.includes(' vs ')) return true;
   if (kl.includes('date') || kl.includes('no') || kl.includes('party') || kl.includes('name') || 
       kl.includes('status') || kl.includes('action') || kl.includes('category') || kl.includes('due') || 
       kl.includes('on') || kl.includes('so') || kl.includes('details') || kl.includes('po') || kl.includes('vpo')) {
@@ -72,12 +80,18 @@ const isNumericCol = (key) => {
 
 const isDateCol = (key) => {
   const kl = String(key).toLowerCase();
+  if (kl.includes(' vs ')) return false;
   return kl.includes('date') || kl.includes('due') || kl.includes('on') || kl.includes('mad') || kl.includes('requested');
 };
 
 const fmtCell = (key, val) => {
   if (val === undefined || val === null || val === '') return '-';
   if (typeof val === 'object' && !(val instanceof Date) && !React.isValidElement(val)) return JSON.stringify(val);
+  const kl = String(key).toLowerCase();
+  if (kl.includes(' vs ') && val !== null && val !== '') {
+    const n = Number(val);
+    if (!isNaN(n)) return n + " Days";
+  }
   if (isDateCol(key)) { const d = toDate(val); if (d) return fmtDate(d); }
   if (key === 'Category') {
     const isDue = String(val) === 'Due' || String(val) === 'Due Order';
@@ -88,7 +102,6 @@ const fmtCell = (key, val) => {
     const col = String(val) === 'Covered' ? '#15803d' : (String(val).includes('Partial') ? '#9a3412' : '#b91c1c');
     return <strong style={{ color: col }}>{String(val)}</strong>;
   }
-  const kl = String(key).toLowerCase();
   if ((kl.includes('rate') || kl.includes('value') || kl.includes('amount') || kl.includes('price') || kl.includes('discount')) && !isNaN(Number(val)) && val !== '') return fmtNum(val, 2);
   return String(val);
 };
@@ -255,20 +268,35 @@ const buildMasterReport = (data) => {
 
 // ── Components ───────────────────────────────────────────────────────────────
 
-const DataTable = ({ list, headers = [], columnGroups = [], rowStyle = null, hideSearch = false, onExport = null }) => {
+const DataTable = ({ list, headers = [], columnGroups = [], rowStyle = null, hideSearch = false, onExport = null, searchTerm = '' }) => {
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [filter, setFilter] = useState('');
+  const [colFilters, setColFilters] = useState({});
   const [page, setPage] = useState(1);
   const pageSize = 100;
-  useEffect(() => setPage(1), [filter, sortCol, sortDir]);
+  useEffect(() => setPage(1), [filter, colFilters, sortCol, sortDir, searchTerm]);
   const cols = useMemo(() => { if (!list || !list.length) return []; const keys = headers.length > 0 ? headers : Object.keys(list[0]); return keys.filter(k => { const v = list[0][k]; return v === null || v === undefined || typeof v !== 'object' || v instanceof Date; }); }, [list, headers]);
   const filtered = useMemo(() => {
     if (!list || !list.length) return [];
-    let res = filter ? list.filter(r => Object.values(r).some(v => String(v || '').toLowerCase().includes(filter.toLowerCase()))) : list;
-    if (sortCol) { res = [...res].sort((a, b) => { const av = a[sortCol], bv = b[sortCol]; if (isNumericCol(sortCol)) return sortDir === 'asc' ? (Number(av)||0) - (Number(bv)||0) : (Number(bv)||0) - (Number(av)||0); return sortDir === 'asc' ? String(av || '').localeCompare(String(bv || '')) : String(bv || '').localeCompare(String(av || '')); }); }
+    const finalSearch = (filter || searchTerm).toLowerCase();
+    let res = list;
+    if (finalSearch) res = res.filter(r => Object.values(r).some(v => String(v || '').toLowerCase().includes(finalSearch)));
+    Object.keys(colFilters).forEach(c => { const fv = colFilters[c].toLowerCase(); if (fv) res = res.filter(r => String(r[c] || '').toLowerCase().includes(fv)); });
+    if (sortCol) {
+      res = [...res].sort((a, b) => {
+        const av = a[sortCol], bv = b[sortCol];
+        if (isNumericCol(sortCol)) return sortDir === 'asc' ? (Number(av) || 0) - (Number(bv) || 0) : (Number(bv) || 0) - (Number(av) || 0);
+        if (isDateCol(sortCol)) {
+          const da = toDate(av)?.getTime() || 0;
+          const db = toDate(bv)?.getTime() || 0;
+          return sortDir === 'asc' ? da - db : db - da;
+        }
+        return sortDir === 'asc' ? String(av || '').localeCompare(String(bv || '')) : String(bv || '').localeCompare(String(av || ''));
+      });
+    }
     return res;
-  }, [list, filter, sortCol, sortDir]);
+  }, [list, filter, searchTerm, colFilters, sortCol, sortDir]);
   const totals = useMemo(() => { const t = {}; cols.forEach(c => { if (isNumericCol(c)) t[c] = filtered.reduce((s, r) => s + (Number(r[c]) || 0), 0); }); return t; }, [filtered, cols]);
   if (!list || !list.length) return <div className="empty">No data to display.</div>;
   return (
@@ -282,7 +310,11 @@ const DataTable = ({ list, headers = [], columnGroups = [], rowStyle = null, hid
         <table>
           <thead>
             {columnGroups.length > 0 && <tr>{columnGroups.map((g, i) => <th key={i} colSpan={g.span} style={{ background: g.bg, color: '#fff', padding: '3px' }}>{g.label}</th>)}</tr>}
-            <tr>{cols.map(c => <th key={c} onClick={() => { if (sortCol === c) setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSortCol(c); setSortDir('asc'); } }} style={{ cursor: 'pointer', textAlign: isNumericCol(c) ? 'right' : 'left' }}>{c} {sortCol === c ? (sortDir === 'asc' ? '▲' : '▼') : ''}{totals[c] !== undefined && <div style={{ fontSize: '8px', color: '#1e40af' }}>{c.toLowerCase().includes('value') ? fmtNum(totals[c], 2) : fmtNum(totals[c])}</div>}</th>)}</tr>
+            <tr>{cols.map(c => <th key={c} onClick={() => { if (sortCol === c) setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSortCol(c); setSortDir('asc'); } }} style={{ cursor: 'pointer', textAlign: isNumericCol(c) ? 'right' : 'left' }}>
+              <div style={{display:'flex', alignItems:'center', justifyContent: isNumericCol(c) ? 'flex-end' : 'flex-start', gap:'4px'}}>{c} {sortCol === c ? (sortDir === 'asc' ? '▲' : '▼') : ''}</div>
+              {totals[c] !== undefined && <div style={{ fontSize: '8px', color: '#1e40af' }}>{c.toLowerCase().includes('value') ? fmtNum(totals[c], 2) : fmtNum(totals[c])}</div>}
+              <input className="col-filter" placeholder="Filter..." value={colFilters[c] || ''} onClick={e => e.stopPropagation()} onChange={e => setColFilters(prev => ({ ...prev, [c]: e.target.value }))} />
+            </th>)}</tr>
           </thead>
           <tbody>
             {filtered.slice((page - 1) * pageSize, page * pageSize).map((r, i) => <tr key={i} style={rowStyle ? rowStyle(r) : {}}>{cols.map(c => <td key={c} style={{ textAlign: isNumericCol(c) ? 'right' : 'left' }}>{fmtCell(c, r[c])}</td>)}</tr>)}
@@ -294,29 +326,51 @@ const DataTable = ({ list, headers = [], columnGroups = [], rowStyle = null, hid
   );
 };
 
-const MasterReport = ({ data }) => {
-  const [search, setSearch] = useState('');
+const Dashboard = ({ data, searchTerm }) => {
   const rawRows = useMemo(() => buildMasterReport(data), [data]);
-  const filtered = useMemo(() => (!search.trim() ? rawRows : rawRows.filter(r => Object.values(r).some(v => String(v || '').toLowerCase().includes(search.trim().toLowerCase())))), [rawRows, search]);
+  const dashboardRows = useMemo(() => rawRows.filter(r => r.poDetails?.order || r.vpoDetails?.soNo), [rawRows]);
+  const display = useMemo(() => dashboardRows.map(r => ({
+    'Order No': r.order,
+    'Party Name': r.partyName,
+    'Name of Item': r.nameOfItem,
+    'Order Qty': r.ordered,
+    'Balance Qty': r.balance,
+    'Value': r.value,
+    'Date (SO)': fmtDate(r.date),
+    'PO No': r.poDetails?.order || '-',
+    'PO Date': fmtDate(r.poDetails?.date),
+    'PO Vs SO': daysDiff(r.poDetails?.date, r.date),
+    'Vendor SO No': r.vpoDetails?.soNo || '-',
+    'Vendor SO Date': fmtDate(r.vpoDetails?.soDate),
+    'SO Date vs PO Date': daysDiff(r.vpoDetails?.soDate, r.poDetails?.date),
+    'VSO Vs Pending SO': daysDiff(r.vpoDetails?.soDate, r.date),
+    'Vendor MAD': fmtDate(r.vpoDetails?.mad),
+    'MAD vs VSO Date': daysDiff(r.vpoDetails?.mad, r.vpoDetails?.soDate),
+    'MAD vs SO': daysDiff(r.vpoDetails?.mad, r.date)
+  })), [dashboardRows]);
+  return <div className="card"><div className="stat-pill" style={{marginBottom:10, display:'inline-block', borderColor:'#1e40af', color:'#1e40af'}}>Active Procurement (PO/VSO Exist): <strong>{dashboardRows.length}</strong></div><DataTable list={display} hideSearch={true} searchTerm={searchTerm} /></div>;
+};
+
+const MasterReport = ({ data, searchTerm }) => {
+  const rawRows = useMemo(() => buildMasterReport(data), [data]);
   const stats = useMemo(() => {
     const t = { ordered: 0, balance: 0, value: 0, stk: 0, alc: 0, due: 0, sch: 0 };
-    filtered.forEach(r => { t.ordered += Number(r.ordered) || 0; t.balance += Number(r.balance) || 0; t.value += Number(r.value) || 0; t.stk += Number(r.stockQty) || 0; t.alc += Number(r.allocatedQty) || 0; if (r._category === 'Due Order') t.due++; else t.sch++; });
+    rawRows.forEach(r => { t.ordered += Number(r.ordered) || 0; t.balance += Number(r.balance) || 0; t.value += Number(r.value) || 0; t.stk += Number(r.stockQty) || 0; t.alc += Number(r.allocatedQty) || 0; if (r._category === 'Due Order') t.due++; else t.sch++; });
     return t;
-  }, [filtered]);
-  const display = useMemo(() => filtered.map(r => ({
+  }, [rawRows]);
+  const display = useMemo(() => rawRows.map(r => ({
     'Category': r._category, 'Date': fmtDate(r.date), 'Order No': r.order, 'Party Name': r.partyName, 'Name of Item': r.nameOfItem, 'Part No': r.partNo, 'Ordered': r.ordered, 'Balance': r.balance, 'Value': r.value, 'Due on': fmtDate(r.dueOn),
     'Stock Qty': r.stockQty, 'Allocated Qty': r.allocatedQty, 'Status': r.stockStatus,
     'PO Order': r.poDetails?.order || '-', 'PO Party': r.poDetails?.party || '-', 'PO Date': fmtDate(r.poDetails?.date), 'PO Ordered': r.poDetails?.ordered || 0, 'PO Balance': r.poDetails?.balance || 0, 'PO Due': fmtDate(r.poDetails?.dueOn),
     'VPO SO': r.vpoDetails?.soNo || '-', 'VPO SO Date': fmtDate(r.vpoDetails?.soDate), 'VPO Line Date': fmtDate(r.vpoDetails?.lineDate), 'VPO Line': r.vpoDetails?.line || '-', 'VPO CustPO': r.vpoDetails?.custPO || '-', 'VPO CustPODate': fmtDate(r.vpoDetails?.custPODate), 'VPO ImportBy': r.vpoDetails?.importBy || '-', 'VPO Ordered': r.vpoDetails?.ordered || 0, 'VPO Open': r.vpoDetails?.open || 0, 'VPO ReqDate': fmtDate(r.vpoDetails?.reqDate), 'VPO MAD': fmtDate(r.vpoDetails?.mad), 'VPO Warehouse': r.vpoDetails?.whName || '-',
     'Action': r.action
-  })), [filtered]);
+  })), [rawRows]);
   return (
     <div className="card">
-      <div className="tbl-toolbar"><input className="tbl-search" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} style={{ width: 220 }} /></div>
       <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
         <div className="stat-pill" style={{ borderColor: '#e11d48' }}>Due: <strong>{stats.due}</strong></div><div className="stat-pill" style={{ borderColor: '#10b981' }}>Scheduled: <strong>{stats.sch}</strong></div><div className="stat-pill" style={{ borderColor: '#2563eb' }}>Ordered: <strong>{fmtNum(stats.ordered)}</strong></div><div className="stat-pill" style={{ borderColor: '#f59e0b' }}>Balance: <strong>{fmtNum(stats.balance)}</strong></div><div className="stat-pill" style={{ borderColor: '#0ea5e9' }}>Value: <strong>{fmtNum(stats.value, 2)}</strong></div>
       </div>
-      <DataTable list={display} hideSearch={true} columnGroups={[{ label: 'SO Details', span: 10, bg: '#1e40af' }, { label: 'Stock', span: 3, bg: '#0369a1' }, { label: 'PO', span: 6, bg: '#0891b2' }, { label: 'Vendor PO', span: 12, bg: '#0d9488' }, { label: 'Action', span: 1, bg: '#111827' }]} rowStyle={r => (r['Category'] === 'Due Order' ? { background: '#fff1f2' } : {})} />
+      <DataTable list={display} hideSearch={true} searchTerm={searchTerm} columnGroups={[{ label: 'SO Details', span: 10, bg: '#1e40af' }, { label: 'Stock', span: 3, bg: '#0369a1' }, { label: 'PO', span: 6, bg: '#0891b2' }, { label: 'Vendor PO', span: 12, bg: '#0d9488' }, { label: 'Action', span: 1, bg: '#111827' }]} rowStyle={r => (r['Category'] === 'Due Order' ? { background: '#fff1f2' } : {})} />
     </div>
   );
 };
@@ -326,7 +380,9 @@ const MasterReport = ({ data }) => {
 const App = () => {
   const [data, setData] = useState({ stock: [], so: [], po: [], oo: [] });
   const [headers, setHeaders] = useState({ stock: [], so: [], po: [], oo: [] });
-  const [activeTab, setActiveTab] = useState('master');
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showSidebar, setShowSidebar] = useState(true);
   const [loading, setLoading] = useState(true);
   useEffect(() => { loadData().then(saved => { if (saved) { setData(saved); setHeaders(saved.headers); } setLoading(false); }); }, []);
   const handleUpload = (e, type) => {
@@ -338,46 +394,125 @@ const App = () => {
       setData(prev => ({ ...prev, [type]: raw })); setHeaders(prev => ({ ...prev, [type]: h })); saveData(type, raw, h); setLoading(false); 
     }; reader.readAsBinaryString(file);
   };
+  const TAB_LABELS = { dashboard: 'DASHBOARD', master: 'MASTER REPORT', stock: 'STOCK', so: 'PENDING SO', po: 'PENDING PO', oo: 'VENDOR OPEN PO' };
   const masterCount = useMemo(() => buildMasterReport(data).length, [data]);
-  const TAB_LABELS = { master: 'MASTER', stock: 'STOCK', so: 'SALES', po: 'PO', oo: 'VENDOR PO' };
+  const counts = {
+    dashboard: buildMasterReport(data).filter(r => r.poDetails?.order || r.vpoDetails?.soNo).length,
+    master: masterCount,
+    stock: data.stock?.length || 0,
+    so: data.so?.length || 0,
+    po: data.po?.length || 0,
+    oo: data.oo?.length || 0
+  };
+
   return (
     <div className="app">
-      <header className="header"><div className="header-logo">SKC</div><div className="header-sub">Intelligence</div><button onClick={() => { if (window.confirm('Delete all?')) { Promise.all(Object.values(TABLE_MAP).map(t => supabase.from(t).delete().neq('id', -1))).then(() => window.location.reload()); } }} className="tbl-btn-danger">Reset All</button></header>
-      <div className="upload-section">{['stock', 'so', 'po', 'oo'].map(t => (<div key={t} className="upload-mini-card"><label>{t.toUpperCase()}</label><input type="file" onChange={e => handleUpload(e, t)} /></div>))}</div>
-      <div className="tabs">{Object.keys(TAB_LABELS).map(t => (<button key={t} className={activeTab === t ? 'active' : ''} onClick={() => setActiveTab(t)}>{TAB_LABELS[t]} { (t === 'master' ? masterCount : data[t]?.length || 0) > 0 ? `(${t === 'master' ? masterCount : data[t].length})` : ''}</button>))}</div>
-      <main className="content">{loading ? <div className="empty">Loading...</div> : (activeTab === 'master' ? <MasterReport data={data} /> : <DataTable list={data[activeTab]} headers={headers[activeTab]} />)}</main>
+      {showSidebar && (
+        <aside className="sidebar">
+          <div className="sidebar-header">Upload Files</div>
+          {['stock', 'so', 'po', 'oo'].map(t => (
+            <div key={t} className="upload-box">
+              <label>{t.toUpperCase()}</label>
+              <input type="file" onChange={e => handleUpload(e, t)} />
+            </div>
+          ))}
+          <div style={{marginTop:'auto'}}>
+            <button onClick={() => { if (window.confirm('Delete all?')) { Promise.all(Object.values(TABLE_MAP).map(t => supabase.from(t).delete().neq('id', -1))).then(() => window.location.reload()); } }} className="tbl-btn-danger" style={{width:'100%'}}>Reset All</button>
+          </div>
+        </aside>
+      )}
+
+      <div className="main-layout">
+        <header className="header">
+          <button className="sidebar-toggle" onClick={() => setShowSidebar(!showSidebar)} title={showSidebar ? "Hide Sidebar" : "Show Sidebar"}>
+            {showSidebar ? "◀" : "▶"}
+          </button>
+          <div className="header-titles">
+            <h1 className="header-main">Siddhi Kabel Corporation Pvt Ltd</h1>
+            <p className="header-sub">Pending SO review report</p>
+          </div>
+          <div className="header-search-container">
+            <span className="header-search-label">UNIVERSAL SEARCH:</span>
+            <input className="header-search" placeholder="Search across all columns..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+          </div>
+        </header>
+
+        <nav className="tabs">
+          {Object.keys(TAB_LABELS).map(t => (
+            <button key={t} className={activeTab === t ? 'active' : ''} onClick={() => setActiveTab(t)}>
+              {TAB_LABELS[t]} {counts[t] > 0 ? `(${counts[t]})` : ''}
+            </button>
+          ))}
+        </nav>
+
+        <main className="content">
+          {loading ? <div className="empty">Loading...</div> : (
+            activeTab === 'dashboard' ? <Dashboard data={data} searchTerm={searchTerm} /> :
+            activeTab === 'master' ? <MasterReport data={data} searchTerm={searchTerm} /> :
+            <DataTable list={data[activeTab]} headers={headers[activeTab]} searchTerm={searchTerm} />
+          )}
+        </main>
+      </div>
       <style>{css}</style>
     </div>
   );
 };
 
 const css = `
-  :root { --bg: #f1f5f9; --surface: #fff; --border: #cbd5e1; --accent: #1e40af; --text: #0f172a; --muted: #475569; --font: 'Cambria', serif; }
+  :root { --bg: #f8fafc; --surface: #ffffff; --border: #e2e8f0; --accent: #2563eb; --text: #1e293b; --muted: #64748b; --font: 'Cambria', serif; }
   body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--text); font-size: 13px; }
-  .header { background: #fff; padding: 5px 15px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
-  .header-logo { font-size: 18px; font-weight: bold; color: var(--accent); }
-  .header-sub { font-size: 11px; color: var(--muted); }
-  .upload-section { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 8px 15px; background: #fff; border-bottom: 1px solid var(--border); }
-  .upload-mini-card { display: flex; align-items: center; gap: 8px; font-size: 10px; border-right: 1px solid #e2e8f0; padding-right: 8px; }
-  .upload-mini-card:last-child { border-right: none; }
-  .upload-mini-card label { font-weight: bold; color: var(--muted); }
-  .upload-mini-card input { font-size: 9px; width: 120px; }
-  .tabs { display: flex; background: #fff; border-bottom: 1px solid var(--border); padding: 0 15px; }
-  .tabs button { padding: 5px 12px; border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent; font-size: 11px; font-family: var(--font); }
-  .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); font-weight: bold; }
-  .content { padding: 10px; }
-  .table-container { background: #fff; border: 1px solid var(--border); overflow: auto; max-height: 80vh; }
+  
+  .app { display: flex; height: 100vh; overflow: hidden; background: var(--bg); }
+  
+  .sidebar { width: 180px; background: #0f172a; color: #f1f5f9; padding: 15px; display: flex; flex-direction: column; gap: 12px; border-right: 1px solid var(--border); flex-shrink: 0; }
+  .sidebar-header { font-size: 11px; font-weight: bold; color: #38bdf8; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 5px; opacity: 0.8; }
+  .upload-box { background: #1e293b; padding: 8px; border-radius: 6px; display: flex; flex-direction: column; gap: 4px; border: 1px solid #334155; transition: all 0.2s; }
+  .upload-box:hover { border-color: #38bdf8; background: #1a2436; }
+  .upload-box label { font-size: 9px; color: #94a3b8; font-weight: bold; }
+  .upload-box input { font-size: 9px; color: #cbd5e1; width: 100%; cursor: pointer; }
+  
+  .main-layout { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  
+  .header { background: #fff; padding: 12px 30px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  .header-titles { display: flex; flex-direction: column; }
+  .header-main { margin: 0; font-size: 24px; color: #1e3a8a; font-weight: 900; letter-spacing: -0.8px; line-height: 1; }
+  .header-sub { margin: 2px 0 0; font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+  
+  .sidebar-toggle { background: #f1f5f9; border: 1px solid var(--border); padding: 5px 10px; border-radius: 6px; cursor: pointer; color: var(--accent); font-weight: bold; transition: all 0.2s; margin-right: 10px; }
+  .sidebar-toggle:hover { background: #e2e8f0; transform: scale(1.05); }
+  
+  .header-search-container { flex: 1; display: flex; justify-content: center; align-items: center; gap: 15px; }
+  .header-search-label { font-size: 10px; font-weight: 900; color: #475569; white-space: nowrap; letter-spacing: 0.5px; }
+  .header-search { width: 400px; padding: 10px 25px; border: 2px solid #e2e8f0; border-radius: 30px; outline: none; font-size: 13px; font-family: var(--font); transition: all 0.2s; background: #f8fafc; }
+  .header-search:focus { border-color: var(--accent); background: #fff; box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1); width: 450px; }
+  
+  .tabs { display: flex; background: #fff; border-bottom: 1px solid var(--border); padding: 0 30px; gap: 25px; flex-shrink: 0; }
+  .tabs button { padding: 15px 5px; border: none; background: none; cursor: pointer; border-bottom: 4px solid transparent; font-size: 11px; font-family: var(--font); color: var(--muted); font-weight: 700; transition: all 0.2s; text-transform: uppercase; letter-spacing: 0.5px; }
+  .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); }
+  .tabs button:hover:not(.active) { color: var(--text); border-bottom-color: #cbd5e1; }
+  
+  .content { flex: 1; overflow: auto; padding: 20px 30px; }
+  .table-container { background: #fff; border: 1px solid var(--border); overflow: auto; max-height: 72vh; border-radius: 10px; box-shadow: 0 4px 15px -3px rgba(0,0,0,0.07); }
   table { width: 100%; border-collapse: collapse; font-size: 11px; }
-  th { background: #f8fafc; padding: 4px 6px; border: 1px solid var(--border); position: sticky; top: 0; z-index: 10; white-space: nowrap; font-weight: bold; }
-  td { padding: 3px 6px; border: 1px solid #f1f5f9; white-space: nowrap; border-right: 1px solid #e2e8f0; line-height: 1.2; }
-  .tbl-toolbar { display: flex; gap: 10px; margin-bottom: 5px; align-items: center; font-size: 11px; }
-  .tbl-search { padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; width: 180px; outline: none; font-size: 11px; }
-  .tbl-btn { padding: 2px 8px; border: 1px solid var(--border); background: #fff; border-radius: 3px; cursor: pointer; font-size: 10px; }
-  .tbl-btn-export { padding: 2px 10px; border: 1px solid #bbf7d0; background: #f0fdf4; color: #15803d; border-radius: 3px; cursor: pointer; font-size: 10px; font-weight: bold; }
-  .tbl-btn-danger { padding: 2px 8px; border: 1px solid #fecaca; background: #fef2f2; color: #b91c1c; border-radius: 3px; cursor: pointer; font-size: 10px; margin-left: auto; }
-  .stat-pill { background: #fff; padding: 2px 10px; border: 1px solid var(--border); border-radius: 15px; font-size: 11px; }
-  .card { background: #fff; padding: 10px; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-  .empty { padding: 20px; text-align: center; color: var(--muted); }
+  th { background: #f1f5f9; padding: 8px 10px; border: 1px solid var(--border); position: sticky; top: 0; z-index: 10; white-space: nowrap; font-weight: 800; color: #334155; text-transform: uppercase; font-size: 10px; }
+  td { padding: 5px 10px; border: 1px solid #f1f5f9; white-space: nowrap; border-right: 1px solid #e2e8f0; line-height: 1.4; color: #475569; }
+  tr:nth-child(even) { background: #f8fafc; }
+  tr:hover { background: #eff6ff; }
+  
+  .tbl-toolbar { display: flex; gap: 10px; margin-bottom: 8px; align-items: center; font-size: 11px; }
+  .tbl-search { padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; width: 180px; outline: none; font-size: 11px; font-family: var(--font); background: #f8fafc; }
+  .tbl-btn { padding: 4px 12px; border: 1px solid var(--border); background: #fff; border-radius: 6px; cursor: pointer; font-size: 10px; font-family: var(--font); font-weight: bold; transition: all 0.2s; }
+  .tbl-btn:hover { background: #f1f5f9; }
+  .tbl-btn-export { padding: 4px 15px; border: 1px solid #bbf7d0; background: #f0fdf4; color: #15803d; border-radius: 6px; cursor: pointer; font-size: 10px; font-weight: bold; }
+  .tbl-btn-danger { padding: 8px 15px; border: 1px solid #fecaca; background: #fef2f2; color: #b91c1c; border-radius: 8px; cursor: pointer; font-size: 10px; font-weight: bold; transition: all 0.2s; }
+  .tbl-btn-danger:hover { background: #fee2e2; transform: translateY(-1px); }
+  
+  .col-filter { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; font-size: 9px; font-family: var(--font); outline: none; font-weight: normal; background: #fff; transition: all 0.2s; }
+  .col-filter:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1); }
+  
+  .stat-pill { background: #fff; padding: 5px 15px; border: 1px solid var(--border); border-radius: 25px; font-size: 11px; font-weight: 700; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+  .card { background: #fff; padding: 20px; border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  .empty { padding: 60px; text-align: center; color: var(--muted); font-size: 15px; font-weight: 500; }
 `;
 
 class ErrorBoundary extends React.Component {
